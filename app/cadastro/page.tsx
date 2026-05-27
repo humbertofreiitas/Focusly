@@ -1,34 +1,47 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 
-export default function Home() {
+export default function Cadastro() {
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
 
   const supabase = createClient()
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
+    setSuccess(null)
     setLoading(true)
 
     const formData = new FormData(e.currentTarget)
+    const name = formData.get('name') as string
     const email = formData.get('email') as string
     const password = formData.get('password') as string
+    const confirmPassword = formData.get('confirmPassword') as string
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    if (password !== confirmPassword) {
+      setError('As senhas não coincidem')
+      setLoading(false)
+      return
+    }
+
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          name: name,
+        },
+      },
     })
 
     if (error) {
-      setError('Email ou senha incorretos')
+      setError(error.message)
     } else {
-      router.push('/dashboard')
+      setSuccess('Verifique seu email para confirmar o cadastro')
     }
 
     setLoading(false)
@@ -43,11 +56,11 @@ export default function Home() {
             Focusly
           </h1>
           <p className="text-lg" style={{ color: '#8b8b9e' }}>
-            Gestão inteligente para fotógrafos
+            Crie sua conta grátis
           </p>
         </div>
 
-        {/* Login Card */}
+        {/* Registration Card */}
         <div 
           className="rounded-2xl p-8 border"
           style={{ 
@@ -55,7 +68,31 @@ export default function Home() {
             borderColor: '#1e1e2e'
           }}
         >
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Name Field */}
+            <div>
+              <label 
+                htmlFor="name" 
+                className="block text-sm font-medium mb-2"
+                style={{ color: '#f8f8ff' }}
+              >
+                Nome completo
+              </label>
+              <input
+                type="text"
+                id="name"
+                name="name"
+                required
+                className="w-full px-4 py-3 rounded-lg border focus:outline-none focus:ring-2 transition-all"
+                style={{
+                  backgroundColor: '#0a0a0f',
+                  borderColor: '#1e1e2e',
+                  color: '#f8f8ff'
+                }}
+                placeholder="Seu nome completo"
+              />
+            </div>
+
             {/* Email Field */}
             <div>
               <label 
@@ -104,21 +141,41 @@ export default function Home() {
               />
             </div>
 
-            {/* Forgot Password Link */}
-            <div className="text-right">
-              <a 
-                href="#" 
-                className="text-sm hover:underline transition-colors"
-                style={{ color: '#a78bfa' }}
+            {/* Confirm Password Field */}
+            <div>
+              <label 
+                htmlFor="confirmPassword" 
+                className="block text-sm font-medium mb-2"
+                style={{ color: '#f8f8ff' }}
               >
-                Esqueci minha senha
-              </a>
+                Confirmar senha
+              </label>
+              <input
+                type="password"
+                id="confirmPassword"
+                name="confirmPassword"
+                required
+                className="w-full px-4 py-3 rounded-lg border focus:outline-none focus:ring-2 transition-all"
+                style={{
+                  backgroundColor: '#0a0a0f',
+                  borderColor: '#1e1e2e',
+                  color: '#f8f8ff'
+                }}
+                placeholder="••••••••"
+              />
             </div>
 
             {/* Error Message */}
             {error && (
               <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>
                 {error}
+              </div>
+            )}
+
+            {/* Success Message */}
+            {success && (
+              <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }}>
+                {success}
               </div>
             )}
 
@@ -131,20 +188,20 @@ export default function Home() {
                 backgroundColor: '#7c6af7'
               }}
             >
-              {loading ? 'Entrando...' : 'Entrar'}
+              {loading ? 'Criando conta...' : 'Criar conta'}
             </button>
           </form>
 
-          {/* Sign Up Link */}
+          {/* Login Link */}
           <div className="mt-6 text-center">
             <p style={{ color: '#8b8b9e' }}>
-              Não tem uma conta?{' '}
+              Já tem uma conta?{' '}
               <a 
-                href="/cadastro" 
+                href="/" 
                 className="font-semibold hover:underline transition-colors"
                 style={{ color: '#a78bfa' }}
               >
-                Criar conta grátis
+                Fazer login
               </a>
             </p>
           </div>
