@@ -12,7 +12,7 @@ interface Transacao {
   valor: number
   data: string
   status: string
-  observacoes: string
+  origem?: string
 }
 
 const getStatusColor = (status: string) => {
@@ -44,24 +44,27 @@ export default function Financeiro() {
     // Carrega transações manuais
     const { data: transData } = await supabase.from('transacoes').select('*').order('data', { ascending: false })
 
-    // Carrega contratos assinados como receitas automáticas
-    const { data: contratosData } = await supabase.from('contratos').select('*').eq('status', 'Assinado')
+    // Carrega pagamentos dos contratos (parcelas reais)
+    const { data: pagamentosData } = await supabase
+      .from('pagamentos')
+      .select('*, contratos(cliente, tipo)')
+      .order('data', { ascending: false })
 
     const manualTransactions: Transacao[] = transData || []
 
-    // Converte contratos assinados em receitas
-    const contratoTransactions: Transacao[] = (contratosData || []).map(c => ({
-      id: `contrato-${c.id}`,
-      descricao: `Contrato - ${c.tipo} ${c.cliente}`,
-      cliente: c.cliente,
+    // Converte pagamentos de contratos em transações
+    const pagamentoTransactions: Transacao[] = (pagamentosData || []).map((p: any) => ({
+      id: `pagamento-${p.id}`,
+      descricao: p.descricao || `${p.tipo} - ${p.contratos?.cliente || ''}`,
+      cliente: p.contratos?.cliente || '-',
       tipo: 'Receita',
-      valor: c.valor,
-      data: c.data_envio || c.created_at?.split('T')[0],
-      status: 'Pago',
-      observacoes: '',
+      valor: p.valor,
+      data: p.data,
+      status: p.status,
+      origem: 'pagamento',
     }))
 
-    setTransactions([...contratoTransactions, ...manualTransactions])
+    setTransactions([...pagamentoTransactions, ...manualTransactions])
     setLoading(false)
   }
 
@@ -84,7 +87,7 @@ export default function Financeiro() {
       }]).select().single()
 
       if (!error && data) {
-        setTransactions([data, ...transactions])
+        setTransactions([{ ...data, origem: 'manual' }, ...transactions])
         setModalOpen(false)
         setNewTransaction({ descricao: '', cliente: '', tipo: 'Despesa', valor: '', data: '', status: 'Pago', observacoes: '' })
       }
@@ -93,7 +96,7 @@ export default function Financeiro() {
   }
 
   const handleDelete = async (id: string) => {
-    if (id.startsWith('contrato-')) return // Não deixa excluir receitas de contratos
+    if (id.startsWith('pagamento-')) return
     const { error } = await supabase.from('transacoes').delete().eq('id', id)
     if (!error) setTransactions(transactions.filter(t => t.id !== id))
   }
@@ -101,6 +104,7 @@ export default function Financeiro() {
   // Filtra por período
   const now = new Date()
   const filtered = transactions.filter(t => {
+    if (!t.data) return false
     const d = new Date(t.data + 'T00:00:00')
     if (periodFilter === 'Este mês') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
     if (periodFilter === 'Último mês') {
@@ -115,18 +119,17 @@ export default function Financeiro() {
   const despesa = filtered.filter(t => t.tipo === 'Despesa' && t.status === 'Pago').reduce((s, t) => s + t.valor, 0)
   const lucro = receita - despesa
   const inadimplencia = filtered.filter(t => t.tipo === 'Receita' && t.status === 'Atrasado').reduce((s, t) => s + t.valor, 0)
+  const pendente = filtered.filter(t => t.tipo === 'Receita' && t.status === 'Pendente').reduce((s, t) => s + t.valor, 0)
 
   // Gráfico dos últimos 6 meses
   const monthlyData = Array.from({ length: 6 }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1)
-    const monthTransactions = transactions.filter(t => {
+    const monthTotal = transactions.filter(t => {
+      if (!t.data) return false
       const td = new Date(t.data + 'T00:00:00')
       return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear() && t.tipo === 'Receita' && t.status === 'Pago'
-    })
-    return {
-      month: d.toLocaleDateString('pt-BR', { month: 'short' }),
-      value: monthTransactions.reduce((s, t) => s + t.valor, 0),
-    }
+    }).reduce((s, t) => s + t.valor, 0)
+    return { month: d.toLocaleDateString('pt-BR', { month: 'short' }), value: monthTotal }
   })
   const maxVal = Math.max(...monthlyData.map(r => r.value), 1)
 
@@ -152,12 +155,12 @@ export default function Financeiro() {
         </div>
 
         {/* Métricas */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
-            { label: 'Receita', value: fmt(receita), color: '#34d399' },
+            { label: 'Receita recebida', value: fmt(receita), color: '#34d399' },
             { label: 'Despesas', value: fmt(despesa), color: '#ef4444' },
             { label: 'Lucro líquido', value: fmt(lucro), color: lucro >= 0 ? '#7c6af7' : '#ef4444' },
-            { label: 'Inadimplência', value: fmt(inadimplencia), color: '#fbbf24' },
+            { label: 'A receber', value: fmt(pendente + inadimplencia), color: '#fbbf24' },
           ].map((s, i) => (
             <div key={i} className="p-6 rounded-xl border" style={{ backgroundColor: '#13131a', borderColor: '#1e1e2e' }}>
               <p className="text-sm mb-2" style={{ color: '#8b8b9e' }}>{s.label}</p>
@@ -173,7 +176,7 @@ export default function Financeiro() {
             {monthlyData.map((item, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-2">
                 <span className="text-xs" style={{ color: '#8b8b9e' }}>{item.value > 0 ? fmt(item.value).replace('R$\u00a0', '') : ''}</span>
-                <div className="w-full rounded-t-lg hover:opacity-80 transition-all relative group"
+                <div className="w-full rounded-t-lg hover:opacity-80 transition-all"
                   style={{ backgroundColor: item.value > 0 ? '#7c6af7' : '#1e1e2e', height: `${Math.max((item.value / maxVal) * 100, 4)}%` }} />
                 <span className="text-xs" style={{ color: '#8b8b9e' }}>{item.month}</span>
               </div>
@@ -189,7 +192,7 @@ export default function Financeiro() {
             ) : filtered.length === 0 ? (
               <div className="p-12 text-center">
                 <p className="text-lg font-semibold mb-2" style={{ color: '#f8f8ff' }}>Nenhuma transação ainda</p>
-                <p style={{ color: '#8b8b9e' }}>Contratos assinados aparecem automaticamente. Adicione despesas manualmente.</p>
+                <p style={{ color: '#8b8b9e' }}>Pagamentos dos contratos aparecem automaticamente. Adicione despesas manualmente.</p>
               </div>
             ) : (
               <table className="w-full">
@@ -204,13 +207,13 @@ export default function Financeiro() {
                   {filtered.map(t => {
                     const sc = getStatusColor(t.status)
                     const isRevenue = t.tipo === 'Receita'
-                    const isContrato = t.id.startsWith('contrato-')
+                    const isPagamento = t.id.startsWith('pagamento-')
                     return (
                       <tr key={t.id} style={{ borderBottom: '1px solid #1e1e2e' }}>
                         <td className="px-6 py-4" style={{ color: '#f8f8ff' }}>
                           <div className="flex items-center gap-2">
                             {t.descricao}
-                            {isContrato && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: 'rgba(124,106,247,0.2)', color: '#a78bfa' }}>Contrato</span>}
+                            {isPagamento && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: 'rgba(52,211,153,0.2)', color: '#34d399' }}>Contrato</span>}
                           </div>
                         </td>
                         <td className="px-6 py-4" style={{ color: '#8b8b9e' }}>{t.cliente}</td>
@@ -223,7 +226,7 @@ export default function Financeiro() {
                           <span className="px-3 py-1 rounded-full text-xs font-semibold" style={{ backgroundColor: sc.bg, color: sc.text }}>{t.status}</span>
                         </td>
                         <td className="px-6 py-4">
-                          {!isContrato && (
+                          {!isPagamento && (
                             <button onClick={() => handleDelete(t.id)} className="px-3 py-1 rounded text-sm hover:opacity-80" style={{ backgroundColor: 'rgba(239,68,68,0.2)', color: '#ef4444' }}>Excluir</button>
                           )}
                         </td>
