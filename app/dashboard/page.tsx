@@ -1,120 +1,100 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import Sidebar from '../components/Sidebar'
 import { createClient } from '@/utils/supabase/client'
 
-const menuItems = [
-  { name: 'Dashboard', icon: '📊', href: '/dashboard' },
-  { name: 'Clientes', icon: '👥', href: '/dashboard/clientes' },
-  { name: 'Agenda', icon: '📅', href: '/dashboard/agenda' },
-  { name: 'Orcamentos', icon: '💰', href: '/dashboard/orcamentos' },
-  { name: 'Contratos', icon: '📄', href: '/dashboard/contratos' },
-  { name: 'Financeiro', icon: '💳', href: '/dashboard/financeiro' },
-  { name: 'Entregas', icon: '📦', href: '/dashboard/entregas' },
-]
-
-const stats = [
-  { label: 'Total de clientes', value: '24', color: '#7c6af7' },
-  { label: 'Sessões este mês', value: '8', color: '#34d399' },
-  { label: 'Receita do mês', value: 'R$ 12.450', color: '#a78bfa' },
-  { label: 'Entregas pendentes', value: '3', color: '#f87171' },
-]
-
-const upcomingSessions = [
-  { client: 'Maria Silva', type: 'Casamento', date: '15/06/2026', time: '14:00', location: 'Igreja Matriz' },
-  { client: 'João Santos', type: 'Ensaio Corporativo', date: '18/06/2026', time: '10:00', location: 'Escritório Central' },
-  { client: 'Ana Costa', type: 'Aniversário', date: '20/06/2026', time: '16:00', location: 'Salão de Festas' },
-  { client: 'Pedro Lima', type: 'Newborn', date: '22/06/2026', time: '09:00', location: 'Estúdio' },
-]
+const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
+const fmtHora = (h: string) => h ? h.slice(0, 5) : ''
 
 export default function Dashboard() {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [userName, setUserName] = useState('')
+  const [totalClientes, setTotalClientes] = useState(0)
+  const [sessoesDoMes, setSessoesDoMes] = useState(0)
+  const [receitaMes, setReceitaMes] = useState(0)
+  const [orcamentosPendentes, setOrcamentosPendentes] = useState(0)
+  const [proximasSessoes, setProximasSessoes] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const router = useRouter()
-  const pathname = usePathname()
   const supabase = createClient()
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
+  useEffect(() => { loadDashboard() }, [])
+
+  const loadDashboard = async () => {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { router.push('/'); return }
+
+    // Nome do usuário
+    setUserName(user.email?.split('@')[0]?.split('.')[0] || 'Fotógrafo')
+
+    const now = new Date()
+    const mesAtual = now.getMonth()
+    const anoAtual = now.getFullYear()
+    const inicioMes = new Date(anoAtual, mesAtual, 1).toISOString().split('T')[0]
+    const fimMes = new Date(anoAtual, mesAtual + 1, 0).toISOString().split('T')[0]
+    const hoje = now.toISOString().split('T')[0]
+
+    // Total de clientes
+    const { count: clientesCount } = await supabase.from('clientes').select('*', { count: 'exact', head: true })
+    setTotalClientes(clientesCount || 0)
+
+    // Sessões do mês
+    const { count: sessoesCount } = await supabase.from('sessoes').select('*', { count: 'exact', head: true })
+      .gte('data', inicioMes).lte('data', fimMes)
+    setSessoesDoMes(sessoesCount || 0)
+
+    // Receita do mês (contratos assinados)
+    const { data: contratos } = await supabase.from('contratos').select('valor')
+      .eq('status', 'Assinado').gte('created_at', `${inicioMes}T00:00:00`)
+    const receita = (contratos || []).reduce((s: number, c: any) => s + c.valor, 0)
+    setReceitaMes(receita)
+
+    // Orçamentos pendentes
+    const { count: orcCount } = await supabase.from('orcamentos').select('*', { count: 'exact', head: true })
+      .eq('status', 'Pendente')
+    setOrcamentosPendentes(orcCount || 0)
+
+    // Próximas sessões (a partir de hoje)
+    const { data: sessoes } = await supabase.from('sessoes').select('*')
+      .gte('data', hoje).order('data', { ascending: true }).limit(4)
+    setProximasSessoes(sessoes || [])
+
+    setLoading(false)
   }
+
+  const stats = [
+    { label: 'Total de clientes', value: totalClientes.toString(), color: '#7c6af7' },
+    { label: 'Sessões este mês', value: sessoesDoMes.toString(), color: '#34d399' },
+    { label: 'Receita do mês', value: fmt(receitaMes), color: '#a78bfa' },
+    { label: 'Orçamentos pendentes', value: orcamentosPendentes.toString(), color: '#f87171' },
+  ]
+
+  const tipoColors: Record<string, string> = {
+    'Casamento': '#7c6af7', 'Ensaio': '#3b82f6', 'Newborn': '#f472b6',
+    'Aniversário': '#fbbf24', 'Corporativo': '#34d399', 'Outro': '#94a3b8',
+  }
+
+  // Formata nome do usuário
+  const firstName = userName.charAt(0).toUpperCase() + userName.slice(1)
 
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: '#0a0a0f' }}>
-      {/* Mobile menu button */}
-      <button
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg"
-        style={{ backgroundColor: '#13131a', color: '#f8f8ff' }}
-      >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          {sidebarOpen
-            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          }
-        </svg>
-      </button>
-
-      {/* Sidebar */}
-      <aside
-        className={`fixed lg:static inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
-        style={{ backgroundColor: '#13131a', borderRight: '1px solid #1e1e2e' }}
-      >
-        <div className="p-6">
-          <h1 className="text-2xl font-bold" style={{ color: '#a78bfa' }}>Focusly</h1>
-        </div>
-
-        <nav className="px-4 space-y-2">
-          {menuItems.map((item) => {
-            const isActive = pathname === item.href
-            return (
-              <a
-                key={item.name}
-                href={item.href}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all hover:opacity-90"
-                style={{
-                  backgroundColor: isActive ? '#7c6af7' : 'transparent',
-                  color: '#f8f8ff',
-                  fontWeight: isActive ? 600 : 400,
-                }}
-              >
-                <span className="text-xl">{item.icon}</span>
-                <span>{item.name}</span>
-              </a>
-            )
-          })}
-        </nav>
-
-        <div className="absolute bottom-0 left-0 right-0 p-4">
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg w-full transition-all hover:opacity-80"
-            style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}
-          >
-            <span className="text-xl">🚪</span>
-            <span>Sair</span>
-          </button>
-        </div>
-      </aside>
-
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />
-      )}
-
-      {/* Main content */}
+      <Sidebar />
       <main className="flex-1 p-4 lg:p-8">
         <header className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="text-2xl font-bold" style={{ color: '#f8f8ff' }}>Olá, Fotógrafo!</h2>
+            <h2 className="text-2xl font-bold" style={{ color: '#f8f8ff' }}>
+              Olá, {loading ? '...' : firstName}! 👋
+            </h2>
             <p style={{ color: '#8b8b9e' }}>Bem-vindo ao seu painel de controle</p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="hidden lg:flex items-center gap-2 px-4 py-2 rounded-lg transition-all hover:opacity-80"
-            style={{ backgroundColor: '#7c6af7', color: '#f8f8ff' }}
-          >
-            Sair
-          </button>
+          <div className="hidden lg:flex items-center gap-3">
+            <span className="text-sm px-3 py-1 rounded-full" style={{ backgroundColor: 'rgba(124,106,247,0.15)', color: '#a78bfa' }}>
+              {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </span>
+          </div>
         </header>
 
         {/* Stats */}
@@ -122,31 +102,67 @@ export default function Dashboard() {
           {stats.map((stat, i) => (
             <div key={i} className="p-6 rounded-xl border" style={{ backgroundColor: '#13131a', borderColor: '#1e1e2e' }}>
               <p className="text-sm mb-2" style={{ color: '#8b8b9e' }}>{stat.label}</p>
-              <p className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</p>
+              <p className="text-3xl font-bold" style={{ color: stat.color }}>
+                {loading ? '...' : stat.value}
+              </p>
             </div>
           ))}
         </div>
 
-        {/* Upcoming Sessions */}
-        <div className="p-6 rounded-xl border" style={{ backgroundColor: '#13131a', borderColor: '#1e1e2e' }}>
-          <h3 className="text-xl font-bold mb-6" style={{ color: '#f8f8ff' }}>Próximas Sessões</h3>
-          <div className="space-y-4">
-            {upcomingSessions.map((session, i) => (
-              <div key={i} className="p-4 rounded-lg border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4" style={{ backgroundColor: '#0a0a0f', borderColor: '#1e1e2e' }}>
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl" style={{ backgroundColor: '#7c6af7' }}>📷</div>
-                  <div>
-                    <p className="font-semibold" style={{ color: '#f8f8ff' }}>{session.client}</p>
-                    <p className="text-sm" style={{ color: '#8b8b9e' }}>{session.type}</p>
+        {/* Próximas sessões */}
+        <div className="p-6 rounded-xl border mb-6" style={{ backgroundColor: '#13131a', borderColor: '#1e1e2e' }}>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold" style={{ color: '#f8f8ff' }}>Próximas Sessões</h3>
+            <a href="/dashboard/agenda" className="text-sm hover:opacity-80" style={{ color: '#a78bfa' }}>Ver agenda →</a>
+          </div>
+          {loading ? (
+            <p style={{ color: '#8b8b9e' }}>Carregando...</p>
+          ) : proximasSessoes.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-lg mb-2" style={{ color: '#f8f8ff' }}>Nenhuma sessão agendada</p>
+              <a href="/dashboard/agenda" className="text-sm hover:opacity-80" style={{ color: '#7c6af7' }}>Agendar sessão →</a>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {proximasSessoes.map((session, i) => (
+                <div key={i} className="p-4 rounded-lg border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+                  style={{ backgroundColor: '#0a0a0f', borderColor: '#1e1e2e' }}>
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl flex-shrink-0"
+                      style={{ backgroundColor: tipoColors[session.tipo] || '#7c6af7' }}>📷</div>
+                    <div>
+                      <p className="font-semibold" style={{ color: '#f8f8ff' }}>{session.cliente_nome}</p>
+                      <p className="text-sm" style={{ color: '#8b8b9e' }}>{session.tipo}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:items-end gap-1">
+                    <p className="text-sm" style={{ color: '#a78bfa' }}>
+                      {new Date(session.data + 'T00:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' })} às {fmtHora(session.horario_inicio)}
+                    </p>
+                    <p className="text-sm" style={{ color: '#8b8b9e' }}>{session.local}</p>
                   </div>
                 </div>
-                <div className="flex flex-col sm:items-end gap-1">
-                  <p className="text-sm" style={{ color: '#a78bfa' }}>{session.date} às {session.time}</p>
-                  <p className="text-sm" style={{ color: '#8b8b9e' }}>{session.location}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Atalhos rápidos */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { label: 'Novo Cliente', icon: '👥', href: '/dashboard/clientes', color: '#7c6af7' },
+            { label: 'Nova Sessão', icon: '📅', href: '/dashboard/agenda', color: '#34d399' },
+            { label: 'Novo Orçamento', icon: '💰', href: '/dashboard/orcamentos', color: '#fbbf24' },
+            { label: 'Ver Contratos', icon: '📄', href: '/dashboard/contratos', color: '#a78bfa' },
+          ].map((item, i) => (
+            <a key={i} href={item.href}
+              className="p-4 rounded-xl border flex items-center gap-3 hover:opacity-80 transition-all"
+              style={{ backgroundColor: '#13131a', borderColor: '#1e1e2e' }}>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center text-xl"
+                style={{ backgroundColor: `${item.color}20` }}>{item.icon}</div>
+              <span className="text-sm font-medium" style={{ color: '#f8f8ff' }}>{item.label}</span>
+            </a>
+          ))}
         </div>
       </main>
     </div>
