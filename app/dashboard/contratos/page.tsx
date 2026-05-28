@@ -73,7 +73,53 @@ export default function Contratos() {
 
   const handleStatusChange = async (id: string, newStatus: Contract['status']) => {
     const { error } = await supabase.from('contratos').update({ status: newStatus }).eq('id', id)
-    if (!error) setContracts(contracts.map(c => c.id === id ? { ...c, status: newStatus } : c))
+    if (error) return
+
+    setContracts(contracts.map(c => c.id === id ? { ...c, status: newStatus } : c))
+
+    if (newStatus === 'Assinado') {
+      const contrato = contracts.find(c => c.id === id)
+      if (!contrato) return
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Cria entrega automaticamente
+      const { data: existingEntrega } = await supabase.from('entregas')
+        .select('id').eq('cliente', contrato.cliente).eq('tipo', contrato.tipo)
+
+      if (!existingEntrega || existingEntrega.length === 0) {
+        await supabase.from('entregas').insert([{
+          cliente: contrato.cliente,
+          tipo: contrato.tipo,
+          total_fotos: 0,
+          editadas: 0,
+          prazo: contrato.data_sessao || null,
+          status: 'Em edição',
+          user_id: user.id,
+        }])
+      }
+
+      // Cria sessão na agenda automaticamente (se tiver data da sessão)
+      if (contrato.data_sessao) {
+        const { data: existingSessao } = await supabase.from('sessoes')
+          .select('id').eq('cliente_nome', contrato.cliente).eq('data', contrato.data_sessao)
+
+        if (!existingSessao || existingSessao.length === 0) {
+          await supabase.from('sessoes').insert([{
+            cliente_nome: contrato.cliente,
+            tipo: contrato.tipo,
+            data: contrato.data_sessao,
+            horario_inicio: '09:00',
+            horario_fim: '11:00',
+            local: '',
+            status: 'Agendado',
+            observacoes: `Criado automaticamente do contrato`,
+            user_id: user.id,
+          }])
+        }
+      }
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -126,7 +172,6 @@ export default function Contratos() {
                           {c.data_sessao ? `Sessão: ${fmtDate(c.data_sessao)}` : `Criado: ${fmtDate(c.data_envio)}`}
                         </p>
 
-                        {/* Mudar status */}
                         <div className="mb-3">
                           <select
                             value={c.status}
